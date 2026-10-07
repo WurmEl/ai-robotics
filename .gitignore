@@ -6,7 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
-data/*
+data/**/*.pkl
+data/**/*.npy
+data/**/*.csv
+data/**/*.pt
+models/
+results/
 
 # Distribution / packaging
 .Python
