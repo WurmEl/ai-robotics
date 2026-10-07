@@ -21,41 +21,59 @@ Moving obstacles and large-scale experiments are not implemented yet.
 
 ## Setup
 
-Python 3.10 or newer is required. Install the package and development test
-dependency from the repository root:
+Python 3.10–3.14 and [uv](https://docs.astral.sh/uv/) are required. The upper
+bound currently reflects available PyTorch wheels. From the repository root,
+sync the application and development dependencies:
 
-```powershell
-python -m pip install -e ".[dev]"
+```sh
+uv sync
 ```
 
 ## Examples
 
 Generate and save 20 reproducible 10-by-12 maps:
 
-```powershell
-python scripts/generate_maps.py --height 10 --width 12 --maps 20 --seed 7
+```sh
+uv run python scripts/generate_maps.py --height 10 --width 12 --maps 20 --seed 7
 ```
 
 Show a generated map with repeated A* replanning:
 
-```powershell
-python scripts/run_astar.py --height 15 --width 15 --seed 7 --visualize
+```sh
+uv run python scripts/run_astar.py --height 15 --width 15 --seed 7 --visualize
 ```
 
 Train a DQN on fixed-size maps, then evaluate both agents on the same test
 maps:
 
-```powershell
-python scripts/train_dqn.py --height 10 --width 10 --episodes 500 --seed 7 --model-path models/dqn.pt
-python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 20 --seed 11 --model-path models/dqn.pt
+```sh
+uv run python scripts/train_dqn.py --height 10 --width 10 --episodes 500 --seed 7 --model-path models/dqn.pt
+uv run python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 20 --seed 11 --model-path models/dqn.pt
 ```
 
 Evaluation writes per-episode success, collisions, steps, path length, runtime,
-mean decision time, and cumulative reward to `results/evaluation.csv`.
-Generated datasets, models, and results are not committed by default.
+mean decision time, cumulative reward, seed, stable map ID, map dimensions,
+obstacle probability, and BFS optimal path length to
+`results/evaluation.csv`. With `--agent both`, each A* and DQN row shares the
+same `map_id` and evaluation map.
 
-Run the tests with:
+Run tests and development checks with:
 
-```powershell
+```sh
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+```
+
+Standard Python packaging remains supported:
+
+```sh
+python -m pip install -e ".[dev]"
 python -m pytest
 ```
+
+Generated datasets, models, and result CSV files are ignored by Git. DQN
+epsilon decreases linearly from `epsilon_start` to `epsilon_end` over
+`epsilon_decay_steps` exploratory action selections; evaluation with
+`explore=False` does not advance this schedule.

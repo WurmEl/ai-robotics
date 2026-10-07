@@ -52,12 +52,9 @@ class AStarAgent:
             if current == goal:
                 return self._reconstruct_path(came_from, goal)
 
-            for action, (delta_row, delta_col) in ACTION_DELTAS.items():
+            for _action, (delta_row, delta_col) in ACTION_DELTAS.items():
                 neighbor = (current[0] + delta_row, current[1] + delta_col)
-                if not (
-                    0 <= neighbor[0] < grid.shape[0]
-                    and 0 <= neighbor[1] < grid.shape[1]
-                ):
+                if not (0 <= neighbor[0] < grid.shape[0] and 0 <= neighbor[1] < grid.shape[1]):
                     continue
                 if grid[neighbor]:
                     continue
@@ -98,10 +95,7 @@ class AStarAgent:
         ):
             raise ValueError(f"{name} must be a (row, column) pair.")
         result = (int(position[0]), int(position[1]))
-        if not (
-            0 <= result[0] < grid.shape[0]
-            and 0 <= result[1] < grid.shape[1]
-        ):
+        if not (0 <= result[0] < grid.shape[0] and 0 <= result[1] < grid.shape[1]):
             raise ValueError(f"{name} must be inside the grid.")
         return result
 

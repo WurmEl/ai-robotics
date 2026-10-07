@@ -5,24 +5,40 @@ from __future__ import annotations
 import argparse
 import time
 from collections.abc import Callable
+from functools import partial
 
 import numpy as np
 
 from navigation.agents.astar_agent import AStarAgent
 from navigation.agents.dqn_agent import DQNAgent
 from navigation.env.grid_world import Action, GridWorldEnv
-from navigation.env.map_generator import MapData, generate_grid
+from navigation.env.map_generator import MapData, bfs_distance, generate_grid
 from navigation.evaluation.metrics import EpisodeMetrics, save_metrics_csv
+
+
+def _choose_astar_action(agent: AStarAgent, env: GridWorldEnv) -> Action | None:
+    return agent.select_action(env.grid, env.position, env.goal)
+
+
+def _choose_dqn_action(agent: DQNAgent, env: GridWorldEnv) -> Action:
+    return agent.select_action(env.get_state(), explore=False)
 
 
 def evaluate_episode(
     agent_name: str,
     episode: int,
+    map_id: str,
+    seed: int | None,
     map_data: MapData,
+    obstacle_probability: float,
     choose_action: Callable[[GridWorldEnv], Action | None],
     max_steps: int,
 ) -> EpisodeMetrics:
     grid, start, goal = map_data
+    optimal_path_length = bfs_distance(grid, start, goal)
+    if optimal_path_length is None:
+        raise ValueError(f"Evaluation map {map_id} has no valid path from start to goal.")
+
     env = GridWorldEnv(grid, start, goal, max_steps=max_steps)
     state = env.reset()
     decision_times: list[float] = []
@@ -44,6 +60,12 @@ def evaluate_episode(
 
     episode_runtime = time.perf_counter() - episode_started
     return EpisodeMetrics(
+        map_id=map_id,
+        seed=seed,
+        height=int(grid.shape[0]),
+        width=int(grid.shape[1]),
+        obstacle_probability=obstacle_probability,
+        optimal_path_length=optimal_path_length,
         agent=agent_name,
         episode=episode,
         success=state.position == goal,
@@ -51,9 +73,7 @@ def evaluate_episode(
         steps=state.steps,
         path_length=path_length,
         episode_runtime=episode_runtime,
-        mean_decision_time=(
-            sum(decision_times) / len(decision_times) if decision_times else 0.0
-        ),
+        mean_decision_time=(sum(decision_times) / len(decision_times) if decision_times else 0.0),
         cumulative_reward=cumulative_reward,
     )
 
@@ -91,21 +111,21 @@ def main() -> None:
     results: list[EpisodeMetrics] = []
     for agent_name in selected_agents:
         astar = AStarAgent() if agent_name == "astar" else None
+        if astar is not None:
+            choose_action = partial(_choose_astar_action, astar)
+        else:
+            assert dqn is not None
+            choose_action = partial(_choose_dqn_action, dqn)
+
         for episode, map_data in enumerate(maps, start=1):
-            if astar is not None:
-                choose_action = lambda env: astar.select_action(
-                    env.grid, env.position, env.goal
-                )
-            else:
-                assert dqn is not None
-                choose_action = lambda env: dqn.select_action(
-                    env.get_state(), explore=False
-                )
             result = evaluate_episode(
-                agent_name,
-                episode,
-                map_data,
-                choose_action,
+                agent_name=agent_name,
+                episode=episode,
+                map_id=f"map_{episode:05d}",
+                seed=args.seed,
+                map_data=map_data,
+                obstacle_probability=args.obstacle_probability,
+                choose_action=choose_action,
                 max_steps=args.height * args.width * 4,
             )
             results.append(result)

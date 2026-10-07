@@ -7,7 +7,7 @@ from collections.abc import Sequence
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.colors import ListedColormap
-from matplotlib.figure import Figure
+from matplotlib.figure import Figure, SubFigure
 
 from navigation.env.grid_world import GridWorldState, Position
 
@@ -21,6 +21,8 @@ class GridWorldVisualizer:
         path: Sequence[Position] | None = None,
         ax: Axes | None = None,
     ) -> None:
+        self.figure: Figure | SubFigure
+        self.ax: Axes
         if ax is None:
             self.figure, self.ax = plt.subplots()
         else:

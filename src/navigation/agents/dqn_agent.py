@@ -30,7 +30,7 @@ class DQNAgent:
         target_update_interval: int = 100,
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.05,
-        epsilon_decay: float = 0.995,
+        epsilon_decay_steps: int = 10_000,
         seed: int | None = None,
         device: str | torch.device = "cpu",
     ) -> None:
@@ -40,8 +40,10 @@ class DQNAgent:
             raise ValueError("batch_size and target_update_interval must be positive.")
         if not 0.0 <= epsilon_end <= epsilon_start <= 1.0:
             raise ValueError("Epsilon values must satisfy 0 <= end <= start <= 1.")
-        if not 0.0 < epsilon_decay <= 1.0:
-            raise ValueError("epsilon_decay must be in (0, 1].")
+        if epsilon_decay_steps <= 0:
+            raise ValueError("epsilon_decay_steps must be positive.")
+        if seed is not None:
+            torch.manual_seed(seed)
 
         self.encoder = FullMapObservationEncoder(map_shape)
         self.map_shape = map_shape
@@ -61,9 +63,11 @@ class DQNAgent:
         self.gamma = gamma
         self.batch_size = batch_size
         self.target_update_interval = target_update_interval
+        self.epsilon_start = epsilon_start
         self.epsilon = epsilon_start
         self.epsilon_end = epsilon_end
-        self.epsilon_decay = epsilon_decay
+        self.epsilon_decay_steps = epsilon_decay_steps
+        self.exploration_steps = 0
         self.updates = 0
         self.replay_buffer = ReplayBuffer(replay_capacity, seed=seed)
         self._rng = np.random.default_rng(seed)
@@ -72,7 +76,9 @@ class DQNAgent:
         """Select an action from the current full-map state."""
         if explore:
             choose_randomly = self._rng.random() < self.epsilon
-            self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
+            self.exploration_steps += 1
+            progress = min(self.exploration_steps / self.epsilon_decay_steps, 1.0)
+            self.epsilon = self.epsilon_start + progress * (self.epsilon_end - self.epsilon_start)
             if choose_randomly:
                 return Action(int(self._rng.integers(len(Action))))
 
@@ -162,6 +168,7 @@ class DQNAgent:
                 "q_network": self.q_network.state_dict(),
                 "target_network": self.target_network.state_dict(),
                 "epsilon": self.epsilon,
+                "exploration_steps": self.exploration_steps,
                 "updates": self.updates,
             },
             model_path,
@@ -178,4 +185,5 @@ class DQNAgent:
         self.q_network.load_state_dict(checkpoint["q_network"])
         self.target_network.load_state_dict(checkpoint["target_network"])
         self.epsilon = float(checkpoint["epsilon"])
+        self.exploration_steps = int(checkpoint["exploration_steps"])
         self.updates = int(checkpoint["updates"])

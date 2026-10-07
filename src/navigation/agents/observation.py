@@ -24,9 +24,7 @@ class FullMapObservationEncoder:
         """
         grid = state.grid
         if grid.shape != self.map_shape:
-            raise ValueError(
-                f"Expected map shape {self.map_shape}, received {grid.shape}."
-            )
+            raise ValueError(f"Expected map shape {self.map_shape}, received {grid.shape}.")
         observation = np.zeros((3, *self.map_shape), dtype=np.float32)
         observation[0] = grid == 1
         observation[1, state.position[0], state.position[1]] = 1.0

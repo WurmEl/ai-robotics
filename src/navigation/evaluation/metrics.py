@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass
 class EpisodeMetrics:
+    map_id: str
+    seed: int | None
+    height: int
+    width: int
+    obstacle_probability: float
+    optimal_path_length: int
     agent: str
     episode: int
     success: bool

@@ -29,11 +29,7 @@ def main() -> None:
 
     rng = np.random.default_rng(args.seed)
     agent = DQNAgent((args.height, args.width), seed=args.seed)
-    max_steps = (
-        args.max_steps
-        if args.max_steps is not None
-        else args.height * args.width * 4
-    )
+    max_steps = args.max_steps if args.max_steps is not None else args.height * args.width * 4
     started = time.perf_counter()
 
     for episode in range(1, args.episodes + 1):
