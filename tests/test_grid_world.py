@@ -50,3 +50,20 @@ def test_reset_clears_episode_counters():
     assert state.position == (0, 0)
     assert state.steps == 0
     assert state.collisions == 0
+
+
+def test_max_steps_terminates_episode():
+    env = GridWorldEnv(
+        np.zeros((2, 2), dtype=np.int8),
+        (0, 0),
+        (1, 1),
+        max_steps=2,
+    )
+
+    _, _, done, info = env.step(Action.UP)
+    assert done is False
+    assert info["termination"] is None
+
+    _, _, done, info = env.step(Action.UP)
+    assert done is True
+    assert info["termination"] == "max_steps"

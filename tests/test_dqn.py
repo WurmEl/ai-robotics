@@ -5,6 +5,7 @@ import torch
 from navigation.agents.dqn_agent import DQNAgent
 from navigation.agents.observation import FullMapObservationEncoder
 from navigation.env.grid_world import GridWorldEnv
+from navigation.rl.replay_buffer import ReplayBuffer, Transition
 
 
 def _parameters_equal(first: DQNAgent, second: DQNAgent) -> bool:
@@ -98,3 +99,32 @@ def test_epsilon_decays_linearly_on_exploratory_selections_only():
 def test_epsilon_schedule_rejects_nonpositive_decay_steps():
     with pytest.raises(ValueError, match="epsilon_decay_steps must be positive"):
         DQNAgent((2, 2), epsilon_decay_steps=0)
+
+
+def test_target_network_starts_equal_to_policy_network():
+    agent = DQNAgent((2, 2), seed=12)
+
+    for name, value in agent.q_network.state_dict().items():
+        torch.testing.assert_close(agent.target_network.state_dict()[name], value)
+
+
+def test_replay_buffer_copies_observations():
+    observation = np.zeros((3, 2, 2), dtype=np.float32)
+    next_observation = np.ones((3, 2, 2), dtype=np.float32)
+    buffer = ReplayBuffer(capacity=2, seed=1)
+    buffer.add(
+        Transition(
+            observation=observation,
+            action=0,
+            reward=1.0,
+            next_observation=next_observation,
+            done=False,
+        )
+    )
+
+    observation[0, 0, 0] = 9.0
+    next_observation[0, 0, 0] = 9.0
+    stored = buffer.sample(1)[0]
+
+    assert stored.observation[0, 0, 0] == 0.0
+    assert stored.next_observation[0, 0, 0] == 1.0

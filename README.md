@@ -1,79 +1,280 @@
-# AI Robotics Grid-World Navigation
+# AI Robotics Navigation Project
 
-This project compares classical global search with learned reactive navigation:
+This project compares classical A* search with Deep Q-Learning (DQN) for
+mobile-robot navigation in 2D grid-world environments.
 
-> How do classical global search and learned reactive navigation compare as environment size and obstacle dynamics increase?
+## Research question
 
-The initial milestone uses **static** maps. Both agents interact with the same
-`GridWorldEnv`, and both receive the full current map, robot position, and goal:
+> How do classical global search and deep reinforcement learning compare as
+> environment size and obstacle dynamics increase?
 
-- **A\*** plans online from the global grid at every environment step. It does
-  not require training.
-- **DQN** receives a full-map observation with separate obstacle, robot, and
-  goal channels (`3 x height x width`). It learns a policy; training is more
-  expensive, while action inference is inexpensive. Its MLP currently expects
-  one fixed map size per model.
+The current milestone focuses on reproducible **static** environments. Both
+agents use the same `GridWorldEnv`; A* has direct access to the global grid,
+while DQN receives an encoded observation of that same current state.
 
-Neither agent receives information about future obstacle movement. The
-observation encoder is separate from the environment and network, leaving room
-for later local-window, dynamic-obstacle-channel, or CNN-based observations.
-Moving obstacles and large-scale experiments are not implemented yet.
+## Current status
+
+Implemented:
+
+- reproducible random map generation with valid start and goal positions;
+- shared static grid-world environment;
+- repeated online A* baseline;
+- DQN with a full-map observation;
+- replay buffer, target network, epsilon-greedy action selection, and
+  checkpoint save/load;
+- fixed-map DQN training mode for debugging;
+- evaluation metrics and CSV output;
+- simple step-by-step matplotlib visualizations;
+- automated tests and Ruff/mypy configuration.
+
+The current DQN sanity check learns a fixed 5x5 map and can reach the goal
+greedily after training. This is an overfitting/debugging milestone, not
+evidence that DQN generalizes to unseen maps.
+
+Not implemented yet:
+
+- dynamic or moving obstacles;
+- systematic larger-map experiments;
+- multi-map generalization experiments;
+- CNN-based DQN;
+- local-observation DQN;
+- final A* versus DQN experiments under changing obstacle dynamics.
+
+## Project structure
+
+```text
+src/navigation/
+├── env/
+│   ├── grid_world.py
+│   └── map_generator.py
+├── agents/
+│   ├── astar_agent.py
+│   ├── dqn_agent.py
+│   └── observation.py
+├── rl/
+│   ├── network.py
+│   └── replay_buffer.py
+├── evaluation/
+│   └── metrics.py
+└── visualization/
+    └── plot_grid.py
+
+scripts/
+├── generate_maps.py
+├── run_astar.py
+├── train_dqn.py
+├── run_dqn.py
+├── evaluate.py
+└── summarize_results.py
+
+tests/
+├── test_astar.py
+├── test_dqn.py
+├── test_grid_world.py
+├── test_map_generator.py
+├── test_metrics.py
+└── test_visualization.py
+```
 
 ## Setup
 
-Python 3.10–3.14 and [uv](https://docs.astral.sh/uv/) are required. The upper
-bound currently reflects available PyTorch wheels. From the repository root,
-sync the application and development dependencies:
+The project requires Python 3.10–3.14 and
+[uv](https://docs.astral.sh/uv/). From the repository root:
 
 ```sh
 uv sync
 ```
 
-## Examples
-
-Generate and save 20 reproducible 10-by-12 maps:
-
-```sh
-uv run python scripts/generate_maps.py --height 10 --width 12 --maps 20 --seed 7
-```
-
-Show a generated map with repeated A* replanning:
-
-```sh
-uv run python scripts/run_astar.py --height 15 --width 15 --seed 7 --visualize
-```
-
-Train a DQN on fixed-size maps, then evaluate both agents on the same test
-maps:
-
-```sh
-uv run python scripts/train_dqn.py --height 10 --width 10 --episodes 500 --seed 7 --model-path models/dqn.pt
-uv run python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 20 --seed 11 --model-path models/dqn.pt
-```
-
-Evaluation writes per-episode success, collisions, steps, path length, runtime,
-mean decision time, cumulative reward, seed, stable map ID, map dimensions,
-obstacle probability, and BFS optimal path length to
-`results/evaluation.csv`. With `--agent both`, each A* and DQN row shares the
-same `map_id` and evaluation map.
-
-Run tests and development checks with:
+Run the tests and optional development checks:
 
 ```sh
 uv run pytest
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check src scripts tests
+uv run ruff format --check src scripts tests
 uv run mypy src
 ```
 
-Standard Python packaging remains supported:
+Standard editable installation is also supported:
 
 ```sh
 python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-Generated datasets, models, and result CSV files are ignored by Git. DQN
-epsilon decreases linearly from `epsilon_start` to `epsilon_end` over
-`epsilon_decay_steps` exploratory action selections; evaluation with
-`explore=False` does not advance this schedule.
+## Quick start
+
+### Generate maps
+
+```sh
+uv run python scripts/generate_maps.py --height 10 --width 12 --maps 20 --seed 7
+```
+
+### Run repeated A*
+
+Use `--visualize` to display the map while A* replans after each environment
+step:
+
+```sh
+uv run python scripts/run_astar.py --height 15 --width 15 --seed 7 --visualize
+```
+
+### Train DQN on one fixed map
+
+Start with fixed-map mode to verify that the DQN can learn a simple task:
+
+```sh
+uv run python scripts/train_dqn.py --height 5 --width 5 --episodes 300 --obstacle-probability 0.1 --seed 7 --training-mode fixed --max-steps 50 --model-path models/fixed.pt
+```
+
+The trainer reports rolling:
+
+- success rate;
+- average reward;
+- average episode length;
+- epsilon.
+
+The generated model is ignored by Git.
+
+### Visualize a trained DQN
+
+Replay the first map generated by the same seed:
+
+```sh
+uv run python scripts/run_dqn.py --height 5 --width 5 --obstacle-probability 0.1 --seed 7 --map-index 1 --model-path models/fixed.pt
+```
+
+To save a final frame instead of opening an animation:
+
+```sh
+uv run python scripts/run_dqn.py --height 5 --width 5 --obstacle-probability 0.1 --seed 7 --map-index 1 --model-path models/fixed.pt --save-path results/fixed-map.png
+```
+
+### Evaluate a trained DQN
+
+Evaluation uses greedy DQN actions (`explore=False`):
+
+```sh
+uv run python scripts/evaluate.py --agent dqn --height 5 --width 5 --episodes 1 --obstacle-probability 0.1 --seed 7 --model-path models/fixed.pt --output results/fixed.csv
+```
+
+To compare A* and DQN on the same generated maps:
+
+```sh
+uv run python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 20 --seed 11 --model-path models/fixed.pt --output results/evaluation.csv
+```
+
+Summarize an evaluation CSV:
+
+```sh
+uv run python scripts/summarize_results.py --input results/evaluation.csv
+uv run python scripts/summarize_results.py --input results/evaluation.csv --per-map
+```
+
+## Environment and observations
+
+The environment is a 2D NumPy grid:
+
+- `0` = free cell;
+- `1` = obstacle.
+
+Actions are:
+
+- `0` = up;
+- `1` = down;
+- `2` = left;
+- `3` = right.
+
+The environment handles movement, collisions, rewards, episode termination,
+and the maximum episode length. It does not contain agent-specific or
+PyTorch logic.
+
+### A*
+
+A* uses:
+
+- the full current grid;
+- the current robot position;
+- the goal position;
+- Manhattan distance as its heuristic.
+
+The baseline recomputes a path at every environment step. This is redundant
+for a static map, but preserves the repeated-planning structure needed for
+later dynamic-environment experiments.
+
+### DQN
+
+The current DQN observation is a full-map tensor with shape
+`3 x height x width`:
+
+1. obstacle channel;
+2. robot-position channel;
+3. goal-position channel.
+
+The observation is encoded separately from the environment. A small MLP
+flattens this tensor and outputs four Q-values:
+
+```text
+Q(up), Q(down), Q(left), Q(right)
+```
+
+The current model supports one fixed map shape per checkpoint.
+
+## Training modes
+
+### `fixed`
+
+One map is generated once and reused for every episode:
+
+```sh
+uv run python scripts/train_dqn.py --training-mode fixed --height 5 --width 5 --episodes 300 --seed 7 --model-path models/fixed.pt
+```
+
+Use this mode first to verify that the DQN implementation can learn at all.
+
+### `random`
+
+A new valid map is generated for every episode. This remains the default and
+preserves the original training behavior:
+
+```sh
+uv run python scripts/train_dqn.py --training-mode random --height 10 --width 10 --episodes 500 --seed 7 --model-path models/random.pt
+```
+
+This is substantially harder because the agent must learn navigation and
+generalization at the same time.
+
+## Evaluation metrics
+
+Evaluation CSV files include:
+
+- stable `map_id`;
+- seed and map dimensions;
+- obstacle probability;
+- BFS optimal path length;
+- agent;
+- success;
+- collisions;
+- steps;
+- path length;
+- episode runtime;
+- mean decision time;
+- cumulative reward.
+
+The same generated maps are used for A* and DQN when `--agent both` is
+selected. Training episodes and training runtime are reported by the training
+command separately rather than being mixed with per-episode inference time.
+
+## Development roadmap
+
+1. Fixed map, fixed start and goal — current sanity-check milestone.
+2. Fixed map with varying starts.
+3. Fixed map with varying starts and goals.
+4. Small pool of static maps.
+5. Unseen held-out static maps.
+6. Larger map experiments.
+7. Moving obstacles and repeated replanning under map updates.
+8. Final A* versus DQN experiments.
+
+Do not interpret success on one fixed map as generalization. The fixed-map
+experiment only establishes that the current DQN pipeline can learn a simple
+static navigation task.

@@ -31,7 +31,15 @@ class ReplayBuffer:
         return len(self._transitions)
 
     def add(self, transition: Transition) -> None:
-        self._transitions.append(transition)
+        self._transitions.append(
+            Transition(
+                observation=transition.observation.copy(),
+                action=transition.action,
+                reward=transition.reward,
+                next_observation=transition.next_observation.copy(),
+                done=transition.done,
+            )
+        )
 
     def sample(self, batch_size: int) -> list[Transition]:
         """Return a random batch; batch size must fit the current buffer."""
