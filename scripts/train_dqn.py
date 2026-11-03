@@ -16,6 +16,7 @@ from navigation.env.map_generator import (
     bfs_distance,
     generate_grid,
     generate_layout_dataset,
+    load_layout_dataset,
     random_start_goal,
 )
 from navigation.rl.shaping import potential_shaping_reward
@@ -34,6 +35,33 @@ def _make_task(
         rng=rng,
     )
     return grid.copy(), start, goal
+
+
+def _load_or_generate_layouts(
+    path: str | None,
+    count: int,
+    height: int,
+    width: int,
+    obstacle_probability: float,
+    min_path_length: int,
+    seed: int,
+) -> list[np.ndarray]:
+    if path is not None and Path(path).exists():
+        layouts = load_layout_dataset(path)
+        if len(layouts) != count:
+            raise ValueError(f"{path} contains {len(layouts)} layouts; expected {count}.")
+        if any(grid.shape != (height, width) for grid in layouts):
+            raise ValueError(f"{path} contains a layout with the wrong shape.")
+        return layouts
+    return generate_layout_dataset(
+        count,
+        height,
+        width,
+        obstacle_probability,
+        min_path_length=min_path_length,
+        save_path=path,
+        seed=seed,
+    )
 
 
 def _make_fixed_tasks(
@@ -131,6 +159,9 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=500)
     parser.add_argument("--obstacle-probability", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--data-seed", type=int, default=None)
+    parser.add_argument("--agent-seed", type=int, default=None)
+    parser.add_argument("--task-seed", type=int, default=None)
     parser.add_argument("--model-path", default="models/dqn.pt")
     parser.add_argument("--network", choices=("mlp", "cnn"), default="mlp")
     parser.add_argument("--learning-rate", type=float, default=1e-3)
@@ -148,6 +179,7 @@ def main() -> None:
         help="default: 2000 for pool mode, 0 otherwise",
     )
     parser.add_argument("--learn-every", type=int, default=1)
+    parser.add_argument("--replay-capacity", type=int, default=10_000)
     parser.add_argument("--reward-shaping", action="store_true")
     parser.add_argument("--shaping-alpha", type=float, default=0.1)
     parser.add_argument("--shaping-gamma", type=float, default=0.99)
@@ -188,6 +220,8 @@ def main() -> None:
         parser.error("learning-starts must be non-negative.")
     if args.learn_every <= 0:
         parser.error("learn-every must be positive.")
+    if args.replay_capacity <= 0:
+        parser.error("replay-capacity must be positive.")
     if args.learning_rate <= 0:
         parser.error("learning-rate must be positive.")
     if args.shaping_alpha < 0 or not 0 < args.shaping_gamma <= 1:
@@ -202,14 +236,20 @@ def main() -> None:
     if args.curriculum and sum(stage_episodes) != args.episodes:
         parser.error("curriculum stage episodes must sum to --episodes.")
 
-    seed = 0 if args.seed is None else args.seed
-    rng = np.random.default_rng(seed)
+    data_seed = args.data_seed if args.data_seed is not None else args.seed
+    agent_seed = args.agent_seed if args.agent_seed is not None else args.seed
+    task_seed = args.task_seed if args.task_seed is not None else args.seed
+    data_generation_seed = 0 if data_seed is None else data_seed
+    task_generation_seed = 0 if task_seed is None else task_seed
+    data_rng = np.random.default_rng(data_generation_seed)
+    task_rng = np.random.default_rng(task_generation_seed)
     agent = DQNAgent(
         (args.height, args.width),
         epsilon_decay_steps=epsilon_decay_steps,
-        seed=args.seed,
+        seed=agent_seed,
         network=args.network,
         learning_rate=args.learning_rate,
+        replay_capacity=args.replay_capacity,
     )
     max_steps = args.max_steps if args.max_steps is not None else args.height * args.width * 4
 
@@ -226,21 +266,21 @@ def main() -> None:
             args.width,
             obstacle_probability=args.obstacle_probability,
             min_path_length=args.min_path_length,
-            rng=rng,
+            rng=data_rng,
         )
         stage1_seen = [fixed_map]
         stage1_unseen = [fixed_map]
         current_stage_tasks = [[fixed_map]]
         final_unseen = [fixed_map]
     elif args.training_mode == "pool":
-        layouts = generate_layout_dataset(
+        layouts = _load_or_generate_layouts(
+            args.train_layouts_path,
             args.pool_size,
             args.height,
             args.width,
             args.obstacle_probability,
-            min_path_length=args.min_path_length,
-            save_path=args.train_layouts_path,
-            seed=seed,
+            args.min_path_length,
+            data_generation_seed,
         )
         if args.curriculum:
             curriculum_stages = [
@@ -249,20 +289,20 @@ def main() -> None:
                 (args.obstacle_probability, 5, 10),
                 (args.obstacle_probability, 5, 15),
             ]
-        validation_layouts = generate_layout_dataset(
+        validation_layouts = _load_or_generate_layouts(
+            args.validation_layouts_path,
             args.validation_size,
             args.height,
             args.width,
             args.obstacle_probability,
-            min_path_length=args.min_path_length,
-            save_path=args.validation_layouts_path,
-            seed=seed + 1,
+            args.min_path_length,
+            data_generation_seed + 1,
         )
-        validation_rng = np.random.default_rng(seed + 2)
+        validation_rng = np.random.default_rng(task_generation_seed)
         validation_tasks = [
             _make_task(grid, validation_rng, args.min_path_length) for grid in validation_layouts
         ]
-        seen_rng = np.random.default_rng(seed + 3)
+        seen_rng = np.random.default_rng(task_generation_seed + 1)
         stage1_seen = _make_fixed_tasks(layouts, seen_rng, 2, 4, min(args.pool_size, 20))
         stage1_unseen = _make_fixed_tasks(
             validation_layouts, seen_rng, 2, 4, min(args.validation_size, 20)
@@ -283,7 +323,7 @@ def main() -> None:
             else [stage1_seen]
         )
     else:
-        validation_rng = np.random.default_rng(seed + 1)
+        validation_rng = np.random.default_rng(task_generation_seed)
         validation_tasks = [
             generate_grid(
                 args.height,
@@ -359,6 +399,13 @@ def main() -> None:
     training_elapsed = 0.0
     rolling_successes = 0
     rolling_rewards: list[float] = []
+    print(
+        "Experiment configuration | "
+        f"data_seed={data_seed} | agent_seed={agent_seed} | task_seed={task_seed} | "
+        f"replay_capacity={args.replay_capacity} | learning_rate={args.learning_rate} | "
+        f"epsilon_decay_steps={epsilon_decay_steps} | pool_size={args.pool_size} | "
+        f"stage_episodes={stage_episodes}"
+    )
     with log_path.open("w", newline="", encoding="utf-8") as log_file:
         writer = csv.DictWriter(log_file, fieldnames=fields)
         writer.writeheader()
@@ -377,8 +424,8 @@ def main() -> None:
             elif layouts:
                 if args.curriculum:
                     requested_stage = stage_index
-                    if stage_index > 0 and rng.random() < 0.25:
-                        requested_stage = int(rng.integers(stage_index))
+                    if stage_index > 0 and task_rng.random() < 0.25:
+                        requested_stage = int(task_rng.integers(stage_index))
                     stage_min = curriculum_stages[requested_stage][1]
                     stage_max = curriculum_stages[requested_stage][2]
                 else:
@@ -387,8 +434,8 @@ def main() -> None:
                 for _ in range(20):
                     try:
                         task = _make_task(
-                            layouts[int(rng.integers(len(layouts)))],
-                            rng,
+                            layouts[int(task_rng.integers(len(layouts)))],
+                            task_rng,
                             stage_min,
                             stage_max,
                         )
@@ -403,7 +450,7 @@ def main() -> None:
                     args.width,
                     obstacle_probability=args.obstacle_probability,
                     min_path_length=args.min_path_length,
-                    rng=rng,
+                    rng=data_rng,
                 )
             grid, start, goal = task
             env = GridWorldEnv(grid, start, goal, max_steps=max_steps)

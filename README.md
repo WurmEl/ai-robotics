@@ -166,6 +166,23 @@ The training CSV includes episode reward, success, steps, collisions, epsilon,
 environment steps, elapsed time, and validation success/collision/path-ratio
 columns at validation intervals.
 
+For controlled comparisons, separate the random sources:
+
+- `--data-seed` controls generated obstacle layouts;
+- `--task-seed` controls fixed start/goal diagnostic tasks;
+- `--agent-seed` controls PyTorch initialization, exploration, and replay
+  sampling.
+
+The older `--seed` remains a shortcut that supplies all three values when the
+specific options are omitted. When `--train-layouts-path` or
+`--validation-layouts-path` already exists, it is loaded and never silently
+overwritten. Use matching layout paths and task seeds for multi-seed agent
+comparisons. Include the agent seed and major settings in model/log filenames
+to avoid overwriting experiments.
+
+Replay capacity is configurable with `--replay-capacity`; the default remains
+`10000`, while larger experiments can use `50000` or `100000`.
+
 For multi-map development runs, make the training controls explicit:
 
 ```sh

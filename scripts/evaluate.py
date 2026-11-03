@@ -92,6 +92,8 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--obstacle-probability", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--data-seed", type=int, default=None)
+    parser.add_argument("--agent-seed", type=int, default=None)
     parser.add_argument(
         "--task-seed",
         type=int,
@@ -113,14 +115,15 @@ def main() -> None:
     if args.max_steps is not None and args.max_steps <= 0:
         parser.error("--max-steps must be positive.")
 
-    rng = np.random.default_rng(args.seed)
+    data_seed = args.data_seed if args.data_seed is not None else args.seed
+    agent_seed = args.agent_seed if args.agent_seed is not None else args.seed
+    task_seed = args.task_seed if args.task_seed is not None else args.seed
+    rng = np.random.default_rng(data_seed)
     if args.layouts_path is not None:
         layouts = load_layout_dataset(args.layouts_path)
         if not layouts:
             parser.error("--layouts-path contains no layouts.")
-        task_rng = np.random.default_rng(
-            args.task_seed if args.task_seed is not None else args.seed
-        )
+        task_rng = np.random.default_rng(task_seed)
         maps = [
             (
                 grid,
@@ -145,7 +148,7 @@ def main() -> None:
     selected_agents = ("astar", "dqn") if args.agent == "both" else (args.agent,)
     dqn: DQNAgent | None = None
     if "dqn" in selected_agents:
-        dqn = DQNAgent((args.height, args.width), seed=args.seed, network=args.network)
+        dqn = DQNAgent((args.height, args.width), seed=agent_seed, network=args.network)
         dqn.load(args.model_path)
 
     results: list[EpisodeMetrics] = []
