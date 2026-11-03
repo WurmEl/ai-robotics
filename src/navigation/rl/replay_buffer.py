@@ -16,6 +16,7 @@ class Transition:
     reward: float
     next_observation: NDArray[np.float32]
     done: bool
+    terminated: bool | None = None
 
 
 class ReplayBuffer:
@@ -38,6 +39,7 @@ class ReplayBuffer:
                 reward=transition.reward,
                 next_observation=transition.next_observation.copy(),
                 done=transition.done,
+                terminated=transition.terminated,
             )
         )
 

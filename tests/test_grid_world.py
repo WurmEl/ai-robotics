@@ -39,6 +39,8 @@ def test_reaching_goal_terminates_episode():
     assert reward == env.step_reward + env.goal_reward
     assert done is True
     assert info["success"] is True
+    assert info["terminated"] is True
+    assert info["truncated"] is False
 
 
 def test_reset_clears_episode_counters():
@@ -67,3 +69,5 @@ def test_max_steps_terminates_episode():
     _, _, done, info = env.step(Action.UP)
     assert done is True
     assert info["termination"] == "max_steps"
+    assert info["terminated"] is False
+    assert info["truncated"] is True

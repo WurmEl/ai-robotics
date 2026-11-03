@@ -12,7 +12,13 @@ import numpy as np
 from navigation.agents.astar_agent import AStarAgent
 from navigation.agents.dqn_agent import DQNAgent
 from navigation.env.grid_world import Action, GridWorldEnv
-from navigation.env.map_generator import MapData, bfs_distance, generate_grid
+from navigation.env.map_generator import (
+    MapData,
+    bfs_distance,
+    generate_grid,
+    load_layout_dataset,
+    random_start_goal,
+)
 from navigation.evaluation.metrics import EpisodeMetrics, save_metrics_csv
 
 
@@ -86,26 +92,60 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--obstacle-probability", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--task-seed",
+        type=int,
+        default=None,
+        help="seed for start/goal sampling when --layouts-path is used",
+    )
     parser.add_argument("--model-path", default="models/dqn.pt")
+    parser.add_argument("--network", choices=("mlp", "cnn"), default="mlp")
     parser.add_argument("--output", default="results/evaluation.csv")
+    parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument(
+        "--layouts-path",
+        default=None,
+        help="evaluate saved obstacle layouts instead of generating new maps",
+    )
     args = parser.parse_args()
     if args.episodes <= 0:
         parser.error("--episodes must be positive.")
+    if args.max_steps is not None and args.max_steps <= 0:
+        parser.error("--max-steps must be positive.")
 
     rng = np.random.default_rng(args.seed)
-    maps = [
-        generate_grid(
-            args.height,
-            args.width,
-            obstacle_probability=args.obstacle_probability,
-            rng=rng,
+    if args.layouts_path is not None:
+        layouts = load_layout_dataset(args.layouts_path)
+        if not layouts:
+            parser.error("--layouts-path contains no layouts.")
+        task_rng = np.random.default_rng(
+            args.task_seed if args.task_seed is not None else args.seed
         )
-        for _ in range(args.episodes)
-    ]
+        maps = [
+            (
+                grid,
+                *random_start_goal(
+                    grid,
+                    min_path_length=2,
+                    rng=task_rng,
+                ),
+            )
+            for grid in layouts[: args.episodes]
+        ]
+    else:
+        maps = [
+            generate_grid(
+                args.height,
+                args.width,
+                obstacle_probability=args.obstacle_probability,
+                rng=rng,
+            )
+            for _ in range(args.episodes)
+        ]
     selected_agents = ("astar", "dqn") if args.agent == "both" else (args.agent,)
     dqn: DQNAgent | None = None
     if "dqn" in selected_agents:
-        dqn = DQNAgent((args.height, args.width), seed=args.seed)
+        dqn = DQNAgent((args.height, args.width), seed=args.seed, network=args.network)
         dqn.load(args.model_path)
 
     results: list[EpisodeMetrics] = []
@@ -126,7 +166,9 @@ def main() -> None:
                 map_data=map_data,
                 obstacle_probability=args.obstacle_probability,
                 choose_action=choose_action,
-                max_steps=args.height * args.width * 4,
+                max_steps=(
+                    args.max_steps if args.max_steps is not None else args.height * args.width * 4
+                ),
             )
             results.append(result)
             print(

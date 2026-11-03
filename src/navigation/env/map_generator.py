@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 Grid: TypeAlias = NDArray[np.int8]
 Position: TypeAlias = tuple[int, int]
 MapData: TypeAlias = tuple[Grid, Position, Position]
+LayoutDataset: TypeAlias = list[Grid]
 
 
 def _get_rng(
@@ -242,6 +243,74 @@ def generate_random_map(
         rng=generator,
         max_attempts=max_attempts,
     )
+
+
+def generate_layout_dataset(
+    nb_layouts: int,
+    height: int,
+    width: int,
+    obstacle_probability: float = 0.2,
+    min_path_length: int = 2,
+    max_path_length: int | None = None,
+    save_path: str | Path | None = None,
+    *,
+    rng: np.random.Generator | None = None,
+    seed: int | None = None,
+    max_attempts: int = 100,
+) -> LayoutDataset:
+    """Generate obstacle layouts and optionally pickle the complete dataset once.
+
+    Each layout is guaranteed to contain at least one valid start/goal pair
+    satisfying the requested path-length constraints. Start and goal are not
+    stored so that tasks can be resampled from a layout during training.
+    """
+    if not isinstance(nb_layouts, (int, np.integer)) or nb_layouts < 0:
+        raise ValueError("nb_layouts must be a non-negative integer.")
+    if not isinstance(height, (int, np.integer)) or height <= 0:
+        raise ValueError("height must be a positive integer.")
+    if not isinstance(width, (int, np.integer)) or width <= 0:
+        raise ValueError("width must be a positive integer.")
+    if not 0.0 <= obstacle_probability <= 1.0:
+        raise ValueError("obstacle_probability must be between 0 and 1.")
+    if not isinstance(max_attempts, (int, np.integer)) or max_attempts <= 0:
+        raise ValueError("max_attempts must be a positive integer.")
+
+    generator = _get_rng(rng, seed)
+    layouts: LayoutDataset = []
+    for _ in range(nb_layouts):
+        for _ in range(max_attempts):
+            grid = (generator.random((height, width)) < obstacle_probability).astype(np.int8)
+            try:
+                random_start_goal(
+                    grid,
+                    min_path_length=min_path_length,
+                    max_path_length=max_path_length,
+                    rng=generator,
+                )
+            except ValueError:
+                continue
+            layouts.append(grid)
+            break
+        else:
+            raise ValueError(
+                f"Could not generate layout {len(layouts) + 1} in {max_attempts} attempts."
+            )
+
+    if save_path is not None:
+        output_path = Path(save_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("wb") as output_file:
+            pickle.dump(layouts, output_file)
+    return layouts
+
+
+def load_layout_dataset(path: str | Path) -> LayoutDataset:
+    """Load a pickled obstacle-layout dataset."""
+    with Path(path).open("rb") as input_file:
+        layouts = pickle.load(input_file)
+    if not isinstance(layouts, list) or not all(isinstance(grid, np.ndarray) for grid in layouts):
+        raise ValueError("Layout dataset must be a list of NumPy arrays.")
+    return layouts
 
 
 def generate_dataset(

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from navigation.agents.dqn_agent import DQNAgent
+from navigation.agents.dqn_agent import DQNAgent, compute_dqn_targets
 from navigation.agents.observation import FullMapObservationEncoder
 from navigation.env.grid_world import GridWorldEnv
 from navigation.rl.replay_buffer import ReplayBuffer, Transition
@@ -128,3 +128,39 @@ def test_replay_buffer_copies_observations():
 
     assert stored.observation[0, 0, 0] == 0.0
     assert stored.next_observation[0, 0, 0] == 1.0
+
+
+def test_cnn_network_trains_and_round_trips_checkpoint(tmp_path):
+    env = GridWorldEnv(np.zeros((5, 5), dtype=np.int8), (0, 0), (4, 4))
+    agent = DQNAgent(
+        (5, 5),
+        network="cnn",
+        batch_size=2,
+        replay_capacity=4,
+        target_update_interval=1,
+        seed=8,
+    )
+    initial_state = env.get_state()
+    action = agent.select_action(initial_state, explore=False)
+    next_state, reward, done, _ = env.step(action)
+    agent.observe(initial_state, action, reward, next_state, done)
+    agent.observe(initial_state, action, reward, next_state, done)
+
+    assert agent.learn() is not None
+    assert agent.q_network(torch.zeros((2, 3, 5, 5), dtype=torch.float32)).shape == (2, 4)
+
+    path = tmp_path / "cnn.pt"
+    agent.save(path)
+    restored = DQNAgent((5, 5), network="cnn", seed=9)
+    restored.load(path)
+    assert restored.network == "cnn"
+
+
+def test_dqn_bootstraps_truncation_but_not_termination():
+    rewards = torch.tensor([1.0, 1.0])
+    next_values = torch.tensor([5.0, 5.0])
+    terminated = torch.tensor([1.0, 0.0])
+
+    targets = compute_dqn_targets(rewards, next_values, terminated, gamma=0.9)
+
+    assert targets.tolist() == pytest.approx([1.0, 5.5])

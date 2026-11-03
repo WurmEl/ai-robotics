@@ -7,6 +7,8 @@ from navigation.env.map_generator import (
     bfs_distance,
     generate_dataset,
     generate_grid,
+    generate_layout_dataset,
+    load_layout_dataset,
     random_start_goal,
 )
 
@@ -76,3 +78,29 @@ def test_empty_dataset_still_validates_generation_parameters():
 def test_generate_grid_rejects_invalid_parameters(arguments, message):
     with pytest.raises(ValueError, match=message):
         generate_grid(*arguments)
+
+
+def test_layout_dataset_is_reproducible_and_stores_grids_only(tmp_path):
+    path = tmp_path / "layouts.pkl"
+    first = generate_layout_dataset(
+        3,
+        5,
+        5,
+        obstacle_probability=0.1,
+        min_path_length=2,
+        seed=31,
+        save_path=path,
+    )
+    second = generate_layout_dataset(
+        3,
+        5,
+        5,
+        obstacle_probability=0.1,
+        min_path_length=2,
+        seed=31,
+    )
+
+    assert all(isinstance(grid, np.ndarray) and grid.shape == (5, 5) for grid in first)
+    assert all(np.array_equal(left, right) for left, right in zip(first, second, strict=True))
+    loaded = load_layout_dataset(path)
+    assert all(np.array_equal(left, right) for left, right in zip(first, loaded, strict=True))

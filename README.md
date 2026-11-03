@@ -61,6 +61,7 @@ src/navigation/
 
 scripts/
 ├── generate_maps.py
+├── generate_datasets.py
 ├── run_astar.py
 ├── train_dqn.py
 ├── run_dqn.py
@@ -109,6 +110,16 @@ python -m pytest
 uv run python scripts/generate_maps.py --height 10 --width 12 --maps 20 --seed 7
 ```
 
+Generate separate, non-overlapping layout datasets for experiments:
+
+```sh
+uv run python scripts/generate_datasets.py --height 10 --width 10 --train 50 --validation 100 --test 300 --seed 7
+```
+
+The command writes obstacle-only layouts to
+`data/train/layouts.pkl`, `data/validation/layouts.pkl`, and
+`data/test/layouts.pkl`. The three sets use separate deterministic seeds.
+
 ### Run repeated A*
 
 Use `--visualize` to display the map while A* replans after each environment
@@ -134,6 +145,37 @@ The trainer reports rolling:
 - epsilon.
 
 The generated model is ignored by Git.
+
+### Train DQN on a layout pool
+
+Pool mode samples one layout from a fixed training set and samples a new valid
+start/goal pair on that layout for each episode. It also creates a separate
+validation layout set and evaluates greedily at each validation interval:
+
+```sh
+uv run python scripts/train_dqn.py --height 10 --width 10 --episodes 500 --pool-size 50 --validation-size 100 --seed 7 --training-mode pool --model-path models/pool.pt --log-path results/pool-training.csv --train-layouts-path data/train/pool-layouts.pkl --validation-layouts-path data/validation/pool-layouts.pkl
+```
+
+Training writes an episode-level CSV and saves:
+
+- the final model;
+- a periodic `-latest.pt` checkpoint;
+- the best-validation `-best.pt` checkpoint.
+
+The training CSV includes episode reward, success, steps, collisions, epsilon,
+environment steps, elapsed time, and validation success/collision/path-ratio
+columns at validation intervals.
+
+For multi-map development runs, make the training controls explicit:
+
+```sh
+uv run python scripts/train_dqn.py --training-mode pool --height 10 --width 10 --episodes 500 --pool-size 50 --validation-size 100 --max-steps 120 --epsilon-decay-steps 100000 --learning-starts 2000 --learn-every 4 --seed 7 --model-path models/pool.pt --log-path results/pool-training.csv
+```
+
+`--learning-starts` delays gradient updates until enough transitions are in
+the replay buffer. `--learn-every` controls how often updates occur after the
+warm-up period. The defaults preserve the earlier behavior; the command above
+uses more conservative settings for 10x10 pool experiments.
 
 ### Visualize a trained DQN
 
@@ -219,6 +261,25 @@ Q(up), Q(down), Q(left), Q(right)
 
 The current model supports one fixed map shape per checkpoint.
 
+Training and evaluation accept `--network mlp` or `--network cnn`. The default
+is `mlp`. The CNN is intentionally small:
+
+```text
+Conv2d(3, 32, 3, padding=1)
+ReLU
+Conv2d(32, 64, 3, padding=1)
+ReLU
+Flatten
+Linear
+ReLU
+Linear(4)
+```
+
+Both networks use the same observation encoder, replay buffer, reward,
+epsilon schedule, target-network update, and checkpoint interface. A
+checkpoint records its network type and rejects loading into the other
+architecture.
+
 ## Training modes
 
 ### `fixed`
@@ -243,6 +304,36 @@ uv run python scripts/train_dqn.py --training-mode random --height 10 --width 10
 This is substantially harder because the agent must learn navigation and
 generalization at the same time.
 
+### Comparing MLP and CNN on the same experiment
+
+The controlled CNN comparison keeps the MLP baseline settings unchanged:
+
+```sh
+uv run python scripts/train_dqn.py --height 10 --width 10 --episodes 1000 --pool-size 50 --validation-size 100 --obstacle-probability 0.1 --min-path-length 2 --seed 7 --network cnn --training-mode pool --max-steps 120 --epsilon-decay-steps 100000 --learning-starts 2000 --learn-every 4 --validation-interval 100 --checkpoint-interval 100 --model-path models/cnn-pool-seed7.pt --log-path results/cnn-pool-seed7-training.csv --train-layouts-path data/train/cnn-pool-seed7-layouts.pkl --validation-layouts-path data/validation/cnn-pool-seed7-layouts.pkl
+```
+
+Use the same command with `--network mlp` and different output filenames for
+the MLP baseline. This comparison asks whether spatial convolutions improve
+unseen 10x10-map generalization; it is not intended to make DQN outperform
+A*.
+
+### Optional curriculum and potential-based shaping
+
+The sparse reward remains the default. For a controlled curriculum experiment,
+enable both options explicitly:
+
+```sh
+uv run python scripts/train_dqn.py --height 10 --width 10 --episodes 1000 --pool-size 50 --validation-size 100 --seed 7 --network cnn --training-mode pool --curriculum --reward-shaping --shaping-alpha 0.1 --shaping-gamma 0.99 --max-steps 120 --epsilon-decay-steps 100000 --learning-starts 2000 --learn-every 4 --model-path models/cnn-curriculum.pt --log-path results/cnn-curriculum-training.csv
+```
+
+Curriculum stages use progressively longer start/goal paths and obstacle
+probabilities. The shaping term is the potential-based Manhattan-distance
+signal
+`alpha * (gamma * Phi(next_state) - Phi(state))`, where
+`Phi(state) = -ManhattanDistance(robot, goal)`. Evaluation continues to use
+the normal environment reward. Training logs include base reward, shaped
+training reward, curriculum stage, and fixed greedy seen/unseen diagnostics.
+
 ## Evaluation metrics
 
 Evaluation CSV files include:
@@ -263,6 +354,14 @@ Evaluation CSV files include:
 The same generated maps are used for A* and DQN when `--agent both` is
 selected. Training episodes and training runtime are reported by the training
 command separately rather than being mixed with per-episode inference time.
+
+To evaluate a saved held-out layout set, use `--layouts-path`. Set
+`--task-seed` to reproduce the same start/goal tasks used by a training
+validation run:
+
+```sh
+uv run python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 100 --seed 8 --task-seed 9 --max-steps 120 --model-path models/pool-best.pt --layouts-path data/validation/layouts.pkl --output results/validation.csv
+```
 
 ## Development roadmap
 

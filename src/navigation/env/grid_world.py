@@ -140,10 +140,12 @@ class GridWorldEnv:
         self.steps += 1
         self.update_dynamic_obstacles()
         success = self.position == self.goal
+        terminated = success
+        truncated = not terminated and self.max_steps is not None and self.steps >= self.max_steps
         if success:
             reward += self.goal_reward
             self.done = True
-        elif self.max_steps is not None and self.steps >= self.max_steps:
+        elif truncated:
             self.done = True
 
         info: dict[str, object] = {
@@ -152,7 +154,9 @@ class GridWorldEnv:
             "position": self.position,
             "steps": self.steps,
             "collisions": self.collisions + int(collision),
-            "termination": "goal" if success else "max_steps" if self.done else None,
+            "termination": "goal" if terminated else "max_steps" if truncated else None,
+            "terminated": terminated,
+            "truncated": truncated,
         }
         if collision:
             self.collisions += 1

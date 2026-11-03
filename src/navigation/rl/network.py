@@ -32,3 +32,33 @@ class QNetwork(nn.Module):
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         """Return one Q-value per action for each flattened observation."""
         return self.layers(observations.flatten(start_dim=1))
+
+
+class CNNQNetwork(nn.Module):
+    """Small spatial Q-network for full-map observations."""
+
+    def __init__(
+        self,
+        observation_shape: tuple[int, int, int],
+        n_actions: int = 4,
+        hidden_size: int = 128,
+    ) -> None:
+        super().__init__()
+        channels, height, width = observation_shape
+        if channels <= 0 or height <= 0 or width <= 0 or n_actions <= 0 or hidden_size <= 0:
+            raise ValueError("Network dimensions must be positive.")
+        self.features = nn.Sequential(
+            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(64 * height * width, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, n_actions),
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        """Return one Q-value per action for each spatial observation."""
+        return self.head(self.features(observations).flatten(start_dim=1))

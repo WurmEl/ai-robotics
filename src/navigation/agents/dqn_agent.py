@@ -11,8 +11,18 @@ from torch.optim import Adam
 
 from navigation.agents.observation import FullMapObservationEncoder
 from navigation.env.grid_world import Action, GridWorldState
-from navigation.rl.network import QNetwork
+from navigation.rl.network import CNNQNetwork, QNetwork
 from navigation.rl.replay_buffer import ReplayBuffer, Transition
+
+
+def compute_dqn_targets(
+    rewards: torch.Tensor,
+    next_values: torch.Tensor,
+    terminated: torch.Tensor,
+    gamma: float,
+) -> torch.Tensor:
+    """Bootstrap through truncation, but not through true termination."""
+    return rewards + gamma * next_values * (1.0 - terminated)
 
 
 class DQNAgent:
@@ -33,6 +43,7 @@ class DQNAgent:
         epsilon_decay_steps: int = 10_000,
         seed: int | None = None,
         device: str | torch.device = "cpu",
+        network: str = "mlp",
     ) -> None:
         if not 0.0 <= gamma <= 1.0:
             raise ValueError("gamma must be between 0 and 1.")
@@ -42,6 +53,8 @@ class DQNAgent:
             raise ValueError("Epsilon values must satisfy 0 <= end <= start <= 1.")
         if epsilon_decay_steps <= 0:
             raise ValueError("epsilon_decay_steps must be positive.")
+        if network not in ("mlp", "cnn"):
+            raise ValueError("network must be 'mlp' or 'cnn'.")
         if seed is not None:
             torch.manual_seed(seed)
 
@@ -50,17 +63,21 @@ class DQNAgent:
         self.observation_shape = (3, *map_shape)
         observation_size = int(np.prod(self.observation_shape))
         self.device = torch.device(device)
-        self.q_network = QNetwork(observation_size, hidden_sizes=hidden_sizes).to(self.device)
-        self.target_network = QNetwork(
-            observation_size,
-            hidden_sizes=hidden_sizes,
-        ).to(self.device)
+
+        def build_network() -> nn.Module:
+            if network == "mlp":
+                return QNetwork(observation_size, hidden_sizes=hidden_sizes)
+            return CNNQNetwork(self.observation_shape, hidden_size=hidden_sizes[0])
+
+        self.q_network = build_network().to(self.device)
+        self.target_network = build_network().to(self.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
         self.target_network.eval()
         self.optimizer = Adam(self.q_network.parameters(), lr=learning_rate)
         self.loss_function = nn.SmoothL1Loss()
 
         self.gamma = gamma
+        self.network = network
         self.batch_size = batch_size
         self.target_update_interval = target_update_interval
         self.epsilon_start = epsilon_start
@@ -92,6 +109,17 @@ class DQNAgent:
             action_index = int(self.q_network(input_tensor).argmax(dim=1).item())
         return Action(action_index)
 
+    def q_values(self, state: GridWorldState) -> np.ndarray:
+        """Return greedy-network Q-values for one state without exploration."""
+        observation = self.encoder.encode(state)
+        input_tensor = torch.as_tensor(
+            observation,
+            dtype=torch.float32,
+            device=self.device,
+        ).unsqueeze(0)
+        with torch.no_grad():
+            return self.q_network(input_tensor).squeeze(0).cpu().numpy()
+
     def observe(
         self,
         state: GridWorldState,
@@ -99,6 +127,7 @@ class DQNAgent:
         reward: float,
         next_state: GridWorldState,
         done: bool,
+        terminated: bool | None = None,
     ) -> None:
         """Encode and store one transition from the shared environment."""
         self.replay_buffer.add(
@@ -108,6 +137,7 @@ class DQNAgent:
                 reward=float(reward),
                 next_observation=self.encoder.encode(next_state),
                 done=bool(done),
+                terminated=bool(done) if terminated is None else bool(terminated),
             )
         )
 
@@ -137,8 +167,8 @@ class DQNAgent:
             dtype=torch.float32,
             device=self.device,
         )
-        dones = torch.as_tensor(
-            [item.done for item in batch],
+        terminations = torch.as_tensor(
+            [item.terminated if item.terminated is not None else item.done for item in batch],
             dtype=torch.float32,
             device=self.device,
         )
@@ -146,7 +176,7 @@ class DQNAgent:
         predicted_values = self.q_network(observations).gather(1, actions.unsqueeze(1)).squeeze(1)
         with torch.no_grad():
             next_values = self.target_network(next_observations).max(dim=1).values
-            target_values = rewards + self.gamma * next_values * (1.0 - dones)
+            target_values = compute_dqn_targets(rewards, next_values, terminations, self.gamma)
 
         loss = self.loss_function(predicted_values, target_values)
         self.optimizer.zero_grad()
@@ -170,6 +200,7 @@ class DQNAgent:
                 "epsilon": self.epsilon,
                 "exploration_steps": self.exploration_steps,
                 "updates": self.updates,
+                "network": self.network,
             },
             model_path,
         )
@@ -181,6 +212,12 @@ class DQNAgent:
             raise ValueError(
                 f"Checkpoint map shape {checkpoint['map_shape']} does not match "
                 f"agent map shape {self.map_shape}."
+            )
+        checkpoint_network = checkpoint.get("network", "mlp")
+        if checkpoint_network != self.network:
+            raise ValueError(
+                f"Checkpoint network {checkpoint_network!r} does not match "
+                f"agent network {self.network!r}."
             )
         self.q_network.load_state_dict(checkpoint["q_network"])
         self.target_network.load_state_dict(checkpoint["target_network"])
