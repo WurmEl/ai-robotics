@@ -11,7 +11,7 @@ from torch.optim import Adam
 
 from navigation.agents.observation import FullMapObservationEncoder
 from navigation.env.grid_world import Action, GridWorldState
-from navigation.rl.network import CNNQNetwork, QNetwork
+from navigation.rl.network import CNNQNetwork, DuelingCNNQNetwork, QNetwork
 from navigation.rl.replay_buffer import ReplayBuffer, Transition
 
 
@@ -23,6 +23,23 @@ def compute_dqn_targets(
 ) -> torch.Tensor:
     """Bootstrap through truncation, but not through true termination."""
     return rewards + gamma * next_values * (1.0 - terminated)
+
+
+def select_next_values(
+    target_network: nn.Module,
+    next_observations: torch.Tensor,
+    *,
+    double_dqn: bool = False,
+    online_network: nn.Module | None = None,
+) -> torch.Tensor:
+    """Select target next-state values using vanilla or Double DQN logic."""
+    target_values = target_network(next_observations)
+    if not double_dqn:
+        return target_values.max(dim=1).values
+    if online_network is None:
+        raise ValueError("online_network is required for Double DQN.")
+    next_actions = online_network(next_observations).argmax(dim=1)
+    return target_values.gather(1, next_actions.unsqueeze(1)).squeeze(1)
 
 
 class DQNAgent:
@@ -44,6 +61,8 @@ class DQNAgent:
         seed: int | None = None,
         device: str | torch.device = "cpu",
         network: str = "mlp",
+        double_dqn: bool = False,
+        dueling: bool = False,
     ) -> None:
         if not 0.0 <= gamma <= 1.0:
             raise ValueError("gamma must be between 0 and 1.")
@@ -55,6 +74,8 @@ class DQNAgent:
             raise ValueError("epsilon_decay_steps must be positive.")
         if network not in ("mlp", "cnn"):
             raise ValueError("network must be 'mlp' or 'cnn'.")
+        if dueling and network != "cnn":
+            raise ValueError("dueling=True is only supported with network='cnn'.")
         if seed is not None:
             torch.manual_seed(seed)
 
@@ -67,6 +88,8 @@ class DQNAgent:
         def build_network() -> nn.Module:
             if network == "mlp":
                 return QNetwork(observation_size, hidden_sizes=hidden_sizes)
+            if dueling:
+                return DuelingCNNQNetwork(self.observation_shape, hidden_size=hidden_sizes[0])
             return CNNQNetwork(self.observation_shape, hidden_size=hidden_sizes[0])
 
         self.q_network = build_network().to(self.device)
@@ -78,6 +101,8 @@ class DQNAgent:
 
         self.gamma = gamma
         self.network = network
+        self.double_dqn = double_dqn
+        self.dueling = dueling
         self.batch_size = batch_size
         self.target_update_interval = target_update_interval
         self.epsilon_start = epsilon_start
@@ -175,7 +200,12 @@ class DQNAgent:
 
         predicted_values = self.q_network(observations).gather(1, actions.unsqueeze(1)).squeeze(1)
         with torch.no_grad():
-            next_values = self.target_network(next_observations).max(dim=1).values
+            next_values = select_next_values(
+                self.target_network,
+                next_observations,
+                double_dqn=self.double_dqn,
+                online_network=self.q_network,
+            )
             target_values = compute_dqn_targets(rewards, next_values, terminations, self.gamma)
 
         loss = self.loss_function(predicted_values, target_values)
@@ -201,6 +231,8 @@ class DQNAgent:
                 "exploration_steps": self.exploration_steps,
                 "updates": self.updates,
                 "network": self.network,
+                "double_dqn": self.double_dqn,
+                "dueling": self.dueling,
             },
             model_path,
         )
@@ -218,6 +250,12 @@ class DQNAgent:
             raise ValueError(
                 f"Checkpoint network {checkpoint_network!r} does not match "
                 f"agent network {self.network!r}."
+            )
+        checkpoint_dueling = bool(checkpoint.get("dueling", False))
+        if checkpoint_dueling != self.dueling:
+            raise ValueError(
+                f"Checkpoint dueling={checkpoint_dueling} does not match "
+                f"agent dueling={self.dueling}."
             )
         self.q_network.load_state_dict(checkpoint["q_network"])
         self.target_network.load_state_dict(checkpoint["target_network"])

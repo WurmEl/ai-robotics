@@ -22,6 +22,7 @@ Implemented:
 - DQN with a full-map observation;
 - replay buffer, target network, epsilon-greedy action selection, and
   checkpoint save/load;
+- A*-labeled behavior-cloning datasets and a supervised CNN policy baseline;
 - fixed-map DQN training mode for debugging;
 - evaluation metrics and CSV output;
 - simple step-by-step matplotlib visualizations;
@@ -36,8 +37,7 @@ Not implemented yet:
 - dynamic or moving obstacles;
 - systematic larger-map experiments;
 - multi-map generalization experiments;
-- CNN-based DQN;
-- local-observation DQN;
+
 - final A* versus DQN experiments under changing obstacle dynamics.
 
 ## Project structure
@@ -222,6 +222,35 @@ To compare A* and DQN on the same generated maps:
 uv run python scripts/evaluate.py --agent both --height 10 --width 10 --episodes 20 --seed 11 --model-path models/fixed.pt --output results/evaluation.csv
 ```
 
+### A*-imitation / behavior cloning
+
+The imitation experiment uses the existing A* planner to label optimal next
+actions from the same three-channel full-map observations used by the CNN DQN.
+Datasets are compressed `.npz` files containing `observations` with shape
+`(N, 3, height, width)` and integer `actions` in the range 0--3, plus task and
+source-layout metadata. Keep training and validation layout paths separate, and
+do not use the final benchmark layouts for model selection.
+
+Generate expert examples:
+
+```sh
+uv run python scripts/generate_imitation_dataset.py --height 10 --width 10 --layouts-path data/train/baseline-d123.pkl --task-seed 21 --tasks-per-layout 20 --min-path-length 2 --output data/train/baseline-d123-imitation.npz
+uv run python scripts/generate_imitation_dataset.py --height 10 --width 10 --layouts-path data/validation/baseline-d123.pkl --task-seed 22 --tasks-per-layout 5 --min-path-length 2 --output data/validation/baseline-d123-imitation.npz
+```
+
+Train the supervised CNN policy:
+
+```sh
+uv run python scripts/train_imitation.py --train-data data/train/baseline-d123-imitation.npz --validation-data data/validation/baseline-d123-imitation.npz --height 10 --width 10 --epochs 30 --batch-size 128 --learning-rate 1e-3 --seed 7 --model-path models/imitation-cnn-seed7.pt --log-path results/imitation-cnn-seed7.csv
+```
+
+Evaluate the policy in the same closed-loop environment and metrics used by
+A* and DQN:
+
+```sh
+uv run python scripts/evaluate.py --agent imitation --network cnn --height 10 --width 10 --episodes 100 --task-seed 23 --layouts-path data/validation/baseline-d123.pkl --model-path models/imitation-cnn-seed7-best.pt --max-steps 120 --output results/imitation-cnn-seed7-validation.csv
+```
+
 Summarize an evaluation CSV:
 
 ```sh
@@ -293,9 +322,11 @@ Linear(4)
 ```
 
 Both networks use the same observation encoder, replay buffer, reward,
-epsilon schedule, target-network update, and checkpoint interface. A
-checkpoint records its network type and rejects loading into the other
-architecture.
+epsilon schedule, target-network update, and checkpoint interface. Training
+and evaluation also support `--double-dqn` and `--dueling`. Double DQN changes
+only target selection; dueling is available for CNNs and uses separate value
+and advantage heads. A checkpoint records its network, Double DQN, and dueling
+settings, while older checkpoints default these new settings to `False`.
 
 ## Training modes
 
@@ -333,6 +364,22 @@ Use the same command with `--network mlp` and different output filenames for
 the MLP baseline. This comparison asks whether spatial convolutions improve
 unseen 10x10-map generalization; it is not intended to make DQN outperform
 A*.
+
+The four controlled CNN variants are selected as follows:
+
+```sh
+# vanilla CNN
+uv run python scripts/train_dqn.py --network cnn ...
+
+# Double DQN
+uv run python scripts/train_dqn.py --network cnn --double-dqn ...
+
+# Dueling CNN
+uv run python scripts/train_dqn.py --network cnn --dueling ...
+
+# Double + Dueling CNN
+uv run python scripts/train_dqn.py --network cnn --double-dqn --dueling ...
+```
 
 ### Optional curriculum and potential-based shaping
 

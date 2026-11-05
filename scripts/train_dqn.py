@@ -164,6 +164,8 @@ def main() -> None:
     parser.add_argument("--task-seed", type=int, default=None)
     parser.add_argument("--model-path", default="models/dqn.pt")
     parser.add_argument("--network", choices=("mlp", "cnn"), default="mlp")
+    parser.add_argument("--double-dqn", action="store_true")
+    parser.add_argument("--dueling", action="store_true")
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument(
@@ -250,6 +252,8 @@ def main() -> None:
         network=args.network,
         learning_rate=args.learning_rate,
         replay_capacity=args.replay_capacity,
+        double_dqn=args.double_dqn,
+        dueling=args.dueling,
     )
     max_steps = args.max_steps if args.max_steps is not None else args.height * args.width * 4
 
@@ -404,7 +408,8 @@ def main() -> None:
         f"data_seed={data_seed} | agent_seed={agent_seed} | task_seed={task_seed} | "
         f"replay_capacity={args.replay_capacity} | learning_rate={args.learning_rate} | "
         f"epsilon_decay_steps={epsilon_decay_steps} | pool_size={args.pool_size} | "
-        f"stage_episodes={stage_episodes}"
+        f"stage_episodes={stage_episodes} | double_dqn={args.double_dqn} | "
+        f"dueling={args.dueling}"
     )
     with log_path.open("w", newline="", encoding="utf-8") as log_file:
         writer = csv.DictWriter(log_file, fieldnames=fields)

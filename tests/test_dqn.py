@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 import torch
 
-from navigation.agents.dqn_agent import DQNAgent, compute_dqn_targets
+from navigation.agents.dqn_agent import DQNAgent, compute_dqn_targets, select_next_values
 from navigation.agents.observation import FullMapObservationEncoder
 from navigation.env.grid_world import GridWorldEnv
+from navigation.rl.network import DuelingCNNQNetwork
 from navigation.rl.replay_buffer import ReplayBuffer, Transition
 
 
@@ -164,3 +165,91 @@ def test_dqn_bootstraps_truncation_but_not_termination():
     targets = compute_dqn_targets(rewards, next_values, terminated, gamma=0.9)
 
     assert targets.tolist() == pytest.approx([1.0, 5.5])
+
+
+class _FixedQNetwork(torch.nn.Module):
+    def __init__(self, values: list[float]) -> None:
+        super().__init__()
+        self.values = torch.tensor(values, dtype=torch.float32)
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        return self.values.expand(observations.shape[0], -1)
+
+
+def test_vanilla_next_values_take_maximum_from_target_network():
+    observations = torch.zeros((1, 3, 2, 2))
+    target = _FixedQNetwork([2.0, 5.0, 1.0, 4.0])
+
+    values = select_next_values(target, observations)
+
+    assert values.tolist() == [5.0]
+
+
+def test_double_dqn_uses_online_action_and_target_value():
+    observations = torch.zeros((1, 3, 2, 2))
+    online = _FixedQNetwork([1.0, 7.0, 5.0, 0.0])
+    target = _FixedQNetwork([9.0, 2.0, 6.0, 3.0])
+
+    values = select_next_values(
+        target,
+        observations,
+        double_dqn=True,
+        online_network=online,
+    )
+
+    assert values.tolist() == [2.0]
+
+
+def test_dueling_cnn_returns_one_q_value_per_action_and_aggregates_heads():
+    network = DuelingCNNQNetwork((3, 5, 5))
+    observations = torch.zeros((2, 3, 5, 5))
+
+    with torch.no_grad():
+        hidden = network.shared(network.features(observations).flatten(start_dim=1))
+        values = network.value_head(hidden)
+        advantages = network.advantage_head(hidden)
+        expected = values + advantages - advantages.mean(dim=1, keepdim=True)
+
+    actual = network(observations)
+
+    assert actual.shape == (2, 4)
+    torch.testing.assert_close(actual, expected)
+
+
+def test_dueling_agent_and_checkpoint_round_trip(tmp_path):
+    agent = DQNAgent((5, 5), network="cnn", dueling=True, seed=4)
+    path = tmp_path / "dueling.pt"
+    agent.save(path)
+
+    restored = DQNAgent((5, 5), network="cnn", dueling=True, seed=9)
+    restored.load(path)
+
+    assert restored.dueling is True
+    for key, value in agent.q_network.state_dict().items():
+        torch.testing.assert_close(restored.q_network.state_dict()[key], value)
+
+
+def test_dueling_is_rejected_for_mlp():
+    with pytest.raises(ValueError, match="only supported with network='cnn'"):
+        DQNAgent((2, 2), network="mlp", dueling=True)
+
+
+def test_legacy_checkpoint_defaults_new_metadata_to_vanilla(tmp_path):
+    agent = DQNAgent((2, 2), seed=4)
+    path = tmp_path / "legacy.pt"
+    checkpoint = {
+        "map_shape": agent.map_shape,
+        "q_network": agent.q_network.state_dict(),
+        "target_network": agent.target_network.state_dict(),
+        "epsilon": agent.epsilon,
+        "exploration_steps": agent.exploration_steps,
+        "updates": agent.updates,
+        "network": "mlp",
+    }
+    torch.save(checkpoint, path)
+
+    restored = DQNAgent((2, 2), seed=9)
+    restored.load(path)
+
+    assert restored.double_dqn is False
+    assert restored.dueling is False

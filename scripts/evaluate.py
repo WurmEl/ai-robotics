@@ -11,6 +11,7 @@ import numpy as np
 
 from navigation.agents.astar_agent import AStarAgent
 from navigation.agents.dqn_agent import DQNAgent
+from navigation.agents.imitation_agent import ImitationAgent
 from navigation.env.grid_world import Action, GridWorldEnv
 from navigation.env.map_generator import (
     MapData,
@@ -28,6 +29,10 @@ def _choose_astar_action(agent: AStarAgent, env: GridWorldEnv) -> Action | None:
 
 def _choose_dqn_action(agent: DQNAgent, env: GridWorldEnv) -> Action:
     return agent.select_action(env.get_state(), explore=False)
+
+
+def _choose_imitation_action(agent: ImitationAgent, env: GridWorldEnv) -> Action:
+    return agent.select_action(env.get_state())
 
 
 def evaluate_episode(
@@ -86,7 +91,7 @@ def evaluate_episode(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--agent", choices=("astar", "dqn", "both"), default="both")
+    parser.add_argument("--agent", choices=("astar", "dqn", "imitation", "both"), default="both")
     parser.add_argument("--height", type=int, default=10)
     parser.add_argument("--width", type=int, default=10)
     parser.add_argument("--episodes", type=int, default=20)
@@ -102,6 +107,8 @@ def main() -> None:
     )
     parser.add_argument("--model-path", default="models/dqn.pt")
     parser.add_argument("--network", choices=("mlp", "cnn"), default="mlp")
+    parser.add_argument("--double-dqn", action="store_true")
+    parser.add_argument("--dueling", action="store_true")
     parser.add_argument("--output", default="results/evaluation.csv")
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument(
@@ -147,18 +154,33 @@ def main() -> None:
         ]
     selected_agents = ("astar", "dqn") if args.agent == "both" else (args.agent,)
     dqn: DQNAgent | None = None
+    imitation: ImitationAgent | None = None
     if "dqn" in selected_agents:
-        dqn = DQNAgent((args.height, args.width), seed=agent_seed, network=args.network)
+        dqn = DQNAgent(
+            (args.height, args.width),
+            seed=agent_seed,
+            network=args.network,
+            double_dqn=args.double_dqn,
+            dueling=args.dueling,
+        )
         dqn.load(args.model_path)
+    if "imitation" in selected_agents:
+        if args.network != "cnn":
+            parser.error("--network must be cnn when --agent imitation is selected.")
+        imitation = ImitationAgent((args.height, args.width))
+        imitation.load(args.model_path)
 
     results: list[EpisodeMetrics] = []
     for agent_name in selected_agents:
         astar = AStarAgent() if agent_name == "astar" else None
         if astar is not None:
             choose_action = partial(_choose_astar_action, astar)
-        else:
+        elif agent_name == "dqn":
             assert dqn is not None
             choose_action = partial(_choose_dqn_action, dqn)
+        else:
+            assert imitation is not None
+            choose_action = partial(_choose_imitation_action, imitation)
 
         for episode, map_data in enumerate(maps, start=1):
             result = evaluate_episode(

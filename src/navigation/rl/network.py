@@ -62,3 +62,67 @@ class CNNQNetwork(nn.Module):
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         """Return one Q-value per action for each spatial observation."""
         return self.head(self.features(observations).flatten(start_dim=1))
+
+
+class DuelingCNNQNetwork(nn.Module):
+    """CNN Q-network with separate state-value and action-advantage heads."""
+
+    def __init__(
+        self,
+        observation_shape: tuple[int, int, int],
+        n_actions: int = 4,
+        hidden_size: int = 128,
+    ) -> None:
+        super().__init__()
+        channels, height, width = observation_shape
+        if channels <= 0 or height <= 0 or width <= 0 or n_actions <= 0 or hidden_size <= 0:
+            raise ValueError("Network dimensions must be positive.")
+        self.features = nn.Sequential(
+            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+        self.shared = nn.Sequential(
+            nn.Linear(64 * height * width, hidden_size),
+            nn.ReLU(),
+        )
+        self.value_head = nn.Linear(hidden_size, 1)
+        self.advantage_head = nn.Linear(hidden_size, n_actions)
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        """Return dueling-combined Q-values for each spatial observation."""
+        hidden = self.shared(self.features(observations).flatten(start_dim=1))
+        values = self.value_head(hidden)
+        advantages = self.advantage_head(hidden)
+        return values + advantages - advantages.mean(dim=1, keepdim=True)
+
+
+class CNNPolicyNetwork(nn.Module):
+    """CNN policy network producing action logits for imitation learning."""
+
+    def __init__(
+        self,
+        observation_shape: tuple[int, int, int],
+        n_actions: int = 4,
+        hidden_size: int = 128,
+    ) -> None:
+        super().__init__()
+        channels, height, width = observation_shape
+        if channels <= 0 or height <= 0 or width <= 0 or n_actions <= 0 or hidden_size <= 0:
+            raise ValueError("Network dimensions must be positive.")
+        self.features = nn.Sequential(
+            nn.Conv2d(channels, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(64 * height * width, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, n_actions),
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        """Return action logits for each spatial observation."""
+        return self.head(self.features(observations).flatten(start_dim=1))
